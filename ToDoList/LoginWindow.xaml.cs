@@ -7,86 +7,94 @@ namespace ToDoApp
 {
     public partial class LoginWindow : Window
     {
-        private readonly string cs = "server=localhost;port=3306;uid=root;pwd=root;database=test;";
+        string cs = "server=localhost;port=3306;uid=root;pwd=root;database=test;";
 
         public LoginWindow()
         {
             InitializeComponent();
-            CreateAdminOnce(); 
+            CreateAdmin();   
         }
 
         private void Login_Click(object sender, RoutedEventArgs e)
         {
             ErrorText.Text = "";
 
-            var username = UserBox.Text?.Trim();
-            var password = PassBox.Password;
+            string username = UserBox.Text;
+            string password = PassBox.Password;
 
-            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            if (username == "" || password == "")
             {
-                ErrorText.Text = "Username and password required.";
+                ErrorText.Text = "Please fill in all fields.";
                 return;
             }
 
             try
             {
-                using var con = new MySqlConnection(cs);
+                MySqlConnection con = new MySqlConnection(cs);
                 con.Open();
 
-                using var cmd = new MySqlCommand(
-                    "SELECT passwordHash, passwordSalt FROM users WHERE username=@u LIMIT 1", con);
+                MySqlCommand cmd = new MySqlCommand(
+                    "SELECT passwordHash, passwordSalt FROM users WHERE username=@u", con);
                 cmd.Parameters.AddWithValue("@u", username);
 
-                using var r = cmd.ExecuteReader();
-                if (!r.Read())
+                MySqlDataReader reader = cmd.ExecuteReader();
+
+                if (!reader.Read())
                 {
                     ErrorText.Text = "User not found.";
+                    con.Close();
                     return;
                 }
 
-                var hash = (byte[])r["passwordHash"];
-                var salt = (byte[])r["passwordSalt"];
+                byte[] hash = (byte[])reader["passwordHash"];
+                byte[] salt = (byte[])reader["passwordSalt"];
 
                 if (!PasswordHasher.Verify(password, hash, salt))
                 {
                     ErrorText.Text = "Wrong password.";
+                    con.Close();
                     return;
                 }
+
+                con.Close();
 
                 new MainWindow().Show();
                 Close();
             }
-            catch (Exception ex)
+            catch
             {
-                ErrorText.Text = "Error: " + ex.Message;
+                ErrorText.Text = "Database error.";
             }
         }
-
-
-        // admin/admin123
-        private void CreateAdminOnce()
+         //admin / admin123
+        private void CreateAdmin()
         {
             try
             {
-                using var con = new MySqlConnection(cs);
+                MySqlConnection con = new MySqlConnection(cs);
                 con.Open();
 
-                using (var check = new MySqlCommand("SELECT COUNT(*) FROM users WHERE username='admin'", con))
+                MySqlCommand check = new MySqlCommand(
+                    "SELECT COUNT(*) FROM users WHERE username='admin'", con);
+
+                int count = Convert.ToInt32(check.ExecuteScalar());
+
+                if (count == 0)
                 {
-                    var exists = Convert.ToInt32(check.ExecuteScalar());
-                    if (exists > 0) return;
+                    var result = PasswordHasher.HashPassword("admin");
+                    byte[] hash = result.hash;
+                    byte[] salt = result.salt;
+
+                    MySqlCommand insert = new MySqlCommand(
+                        "INSERT INTO users(username, passwordHash, passwordSalt) VALUES('admin', @h, @s)", con);
+
+                    insert.Parameters.AddWithValue("@h", hash);
+                    insert.Parameters.AddWithValue("@s", salt);
+
+                    insert.ExecuteNonQuery();
                 }
 
-                var (hash, salt) = PasswordHasher.HashPassword("admin123");
-
-                using var cmd = new MySqlCommand(
-                    "INSERT INTO users(username, passwordHash, passwordSalt) VALUES(@u,@h,@s)", con);
-
-                cmd.Parameters.AddWithValue("@u", "admin");
-                cmd.Parameters.Add("@h", MySqlDbType.VarBinary, hash.Length).Value = hash;
-                cmd.Parameters.Add("@s", MySqlDbType.VarBinary, salt.Length).Value = salt;
-
-                cmd.ExecuteNonQuery();
+                con.Close();
             }
             catch
             {
